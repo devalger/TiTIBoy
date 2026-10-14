@@ -76,11 +76,39 @@ const TABLE_PRODUCTS='products', TABLE_ORDERS='orders', STORAGE_BUCKET='product-
 let session=null, products=[], orders=[], activeTab='home', cart=[];
 const $=id=>document.getElementById(id);
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000)}
-function api(path,opts={}){const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+(session?.access_token||SUPABASE_KEY),'Content-Type':'application/json',...(opts.headers||{})};return fetch(SUPABASE_URL+path,{...opts,headers})}
+async function ensureFreshSession(){
+ if(!session?.access_token) throw Error('انتهت جلسة الدخول. سجّل الدخول من جديد.');
+ const expiresAt=Number(session.expires_at||0);
+ if(expiresAt && expiresAt*1000>Date.now()+60000) return;
+ if(!session.refresh_token) {
+   session=null; localStorage.removeItem('titi_admin_session');
+   throw Error('انتهت جلسة الدخول ولا يوجد رمز تجديد. سجّل الدخول من جديد.');
+ }
+ const r=await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=refresh_token',{
+   method:'POST',headers:{'apikey':SUPABASE_KEY,'Content-Type':'application/json'},
+   body:JSON.stringify({refresh_token:session.refresh_token})
+ });
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok || !d.access_token){
+   session=null;localStorage.removeItem('titi_admin_session');
+   throw Error('انتهت جلسة الدخول. سجّل الخروج ثم ادخل بالبريد وكلمة المرور من جديد.');
+ }
+ session=d;localStorage.setItem('titi_admin_session',JSON.stringify(d));
+}
+async function api(path,opts={}){
+ await ensureFreshSession();
+ const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+session.access_token,'Content-Type':'application/json',...(opts.headers||{})};
+ const r=await fetch(SUPABASE_URL+path,{...opts,headers});
+ if(r.status===401){
+   session=null;localStorage.removeItem('titi_admin_session');
+   throw Error('رفضت Supabase الطلب بسبب انتهاء جلسة الدخول. سجّل الدخول من جديد.');
+ }
+ return r;
+}
 function openAdmin(){$('adminOverlay').classList.add('open');document.body.style.overflow='hidden';checkSession()}
 function closeAdmin(){$('adminOverlay').classList.remove('open');document.body.style.overflow=''}
 async function login(){const email=$('adminEmail').value.trim(),password=$('adminPassword').value;$('loginMsg').textContent='جارٍ تسجيل الدخول...';try{const r=await fetch(SUPABASE_URL+'/auth/v1/token?grant_type=password',{method:'POST',headers:{'apikey':SUPABASE_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,password})});const d=await r.json();if(!r.ok)throw Error(d.msg||d.message||d.error_description||'تعذر تسجيل الدخول');session=d;localStorage.setItem('titi_admin_session',JSON.stringify(d));showDashboard();$('loginMsg').textContent='';await refreshAll()}catch(e){$('loginMsg').textContent='فشل الدخول: '+e.message}}
-function checkSession(){try{session=JSON.parse(localStorage.getItem('titi_admin_session')||'null')}catch{session=null}if(session?.access_token){showDashboard();refreshAll()}else{session=null;$('loginView').classList.remove('hidden');$('dashboardView').classList.add('hidden');$('logoutBtn').classList.add('hidden')}}
+function checkSession(){try{session=JSON.parse(localStorage.getItem('titi_admin_session')||'null')}catch{session=null}if(session?.access_token&&session?.refresh_token){showDashboard();refreshAll()}else{session=null;localStorage.removeItem('titi_admin_session');$('loginView').classList.remove('hidden');$('dashboardView').classList.add('hidden');$('logoutBtn').classList.add('hidden')}}
 function showDashboard(){$('loginView').classList.add('hidden');$('dashboardView').classList.remove('hidden');$('logoutBtn').classList.remove('hidden')}
 function logout(){session=null;localStorage.removeItem('titi_admin_session');$('loginView').classList.remove('hidden');$('dashboardView').classList.add('hidden');$('logoutBtn').classList.add('hidden');$('adminPassword').value='';$('loginMsg').textContent='تم تسجيل الخروج.'}
 function tab(name,btn){activeTab=name;document.querySelectorAll('[id^=tab-]').forEach(x=>x.classList.add('hidden'));$('tab-'+name).classList.remove('hidden');document.querySelectorAll('.admin-tabs button').forEach(x=>x.classList.remove('active'));if(btn)btn.classList.add('active')}
